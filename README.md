@@ -9,8 +9,8 @@ Built as a forward-deployed-engineering practice project. The client is fictiona
 (a Spanish health-sector software vendor); the data, the API quirks, and the
 requirements are real. See [SCOPE.md](SCOPE.md) for the one-page spec.
 
-**Status:** week 1 of 2 complete — ingestion works end to end against live data.
-Extraction, eval harness and UI are week 2.
+**Status:** ingestion and the extraction eval harness work end to end against
+live data. The search UI and deployment are the remaining pieces.
 
 ---
 
@@ -22,6 +22,8 @@ A real backfill of the `spanish-health-it` profile, run 2026-10-23:
 window            2026-06-25 .. 2026-10-23 (120 days, 9 chunks)
 fetched           2764 notices -> inserted 2764, updated 0, unchanged 0
 re-run of last    332 notices  -> inserted 0, updated 0, unchanged 332   (idempotent)
+re-ingest after   2764 notices -> inserted 0, updated 2386, unchanged 378
+ adding 10 fields                (schema migration + content-hash both exercised)
 keyword-relevant  424
 with EUR value    2321  (EUR 19.6bn in aggregate)
 database size     42.9 MB (raw payloads retained)
@@ -60,10 +62,59 @@ python -m venv .venv
 # fetch and normalize without writing notice rows
 .venv/Scripts/python.exe -m procsignal.ingest --days 7 --max-pages 1 --dry-run
 
-.venv/Scripts/python.exe -m unittest discover -s tests     # 39 tests
+.venv/Scripts/python.exe -m unittest discover -s tests     # 77 tests
 ```
 
 No API key is required — the TED Search API is public.
+
+## Extraction and eval
+
+```sh
+# build the stratified eval case set from the ingested database
+.venv/Scripts/python.exe -m procsignal.evaluate build --limit 50
+
+# score an extractor (stub needs no API key and costs nothing)
+.venv/Scripts/python.exe -m procsignal.evaluate run --extractor stub
+.venv/Scripts/python.exe -m procsignal.evaluate run --extractor claude --effort medium
+
+# label the three fields TED has no counterpart for
+.venv/Scripts/python.exe scripts/label_cases.py --stratum keyword_false_positive_candidate
+
+# run extraction across the database and persist it
+.venv/Scripts/python.exe -m procsignal.enrich --extractor stub --limit 20
+```
+
+Methodology is in **[docs/EVAL.md](docs/EVAL.md)**, including the design error
+the harness caught before any model spend. Summary of that episode:
+
+> The original design extracted budget and submission deadline from the notice
+> text and scored them against TED's structured fields. The first baseline run
+> found a budget in 2 of 50 cases and a deadline in **0 of 50**. Measuring the
+> input explained it — `description-proc` is a 269-character subject line, not
+> the tender dossier, and several notices explicitly say the requirements live
+> in a separate PPTP document TED does not carry. Both fields were
+> unextractable by construction, and both were already published structured.
+>
+> The fix was to ask TED for the fields that *do* carry requirement prose
+> (award criteria 81% populated on open contract notices, selection criteria
+> 70%, exclusion grounds 64%) and to re-scope extraction onto what the text
+> supports. This overturned the SCOPE.md assumption that notice metadata alone
+> was sufficient.
+
+Current baseline — `StubExtractor`, regexes only, no API key, zero cost:
+
+| field | n | recall | wrong-value | abstain |
+|---|---:|---:|---:|---:|
+| `cpv_division` | 50 | 56.0% | 44.0% | 0.0% |
+| `contract_nature` | 50 | 76.0% | 17.4% | 8.0% |
+| `lot_count` | 50 | 92.0% | 8.0% | 0.0% |
+
+`is_health_related`, `work_category` and `required_certifications` have no
+structured counterpart in TED and are unscored until labelled — which is why
+they are the fields worth extracting. **No Claude numbers are recorded yet:**
+there is no Anthropic credential on the machine this was built on. The code
+path exists and is exercised by the stub; `--extractor claude` produces the
+real figures once a key is set.
 
 ## Browsing the data
 
@@ -156,6 +207,12 @@ Dates are bare `YYYYMMDD`, *not* ISO-8601. CPV must be the full 8 digits — the
 2-digit family prefix is rejected with `QUERY_UNSUPPORTED_FIELD_VALUE`, but
 hierarchical matching is implicit, so `72000000` also matches `72212900`.
 
+**`fields` x `limit` must be <= 10,000.** Undocumented, and the error only
+appears once you ask for enough fields: 45 fields at a page size of 250 is
+11,250 and returns `SEARCH_FIELDS_PER_PAGE_EXCEEDS_MAX_LIMIT`. `TedClient`
+derives the page size from the field count rather than making the caller
+redo that arithmetic every time a field is added.
+
 **Pagination.** Set `paginationMode: "ITERATION"` and follow the opaque
 `iterationNextToken`. Page size up to 250. The scroll ends when the token comes
 back null; the last page is empty rather than short. A response can also carry
@@ -189,9 +246,13 @@ src/procsignal/
   normalize.py   the hostile-payload transform (the actual engineering)
   store.py       SQLite: raw + normalized tables, idempotent upsert, run log
   ingest.py      CLI: date windowing, chunking, reporting
+  extract.py     extraction schema, Claude extractor, regex baseline, pricing
+  evaluate.py    case-set builder, scorer, run reporting
+  enrich.py      CLI: run extraction across the database, resumably
 scripts/
   dump_fields.py enumerate the 1833 selectable API fields
   inspect_db.py  read-only database browser (no sqlite3 CLI required)
+  label_cases.py label the eval fields TED has no ground truth for
 tests/           39 tests, fixtures copied from real API responses
 docs/
   ted_fields.txt generated field vocabulary
@@ -205,6 +266,7 @@ docs/
 | `notices` | The normalized, indexed, queryable row |
 | `ingest_runs` | One row per attempt, written at start and updated at finish — a crashed run leaves a `running` row rather than no trace |
 | `field_observations` | How often each API key has been seen and when first seen — a key appearing for the first time months in is how a schema change announces itself |
+| `extractions` | One row per notice per extractor/model/effort/prompt-version, so two configurations can be compared on the same notice instead of overwriting each other |
 
 Writes are keyed on `publication_number` and compare a sorted-key content hash,
 so re-ingesting unchanged data is recorded as `unchanged` rather than rewritten,
@@ -234,6 +296,14 @@ Either Spanish notices do not populate it or the field means something other
 than its name suggests. The raw payloads are retained, so this is answerable
 without re-crawling — but it is currently an open question, not a finding.
 
+**The real tender requirements are in a document TED does not carry.** Notice
+metadata carries award and selection criteria as short clauses, which is
+enough to classify a tender but not to answer "can we actually meet this spec".
+That lives in the PPTP, a separate PDF on the buyer's own portal. Ingesting
+those is a genuine scope expansion — a per-buyer scraper plus PDF extraction —
+and it is deliberately still out of scope. The notice-level fields are enough
+for the triage decision the client actually asked for.
+
 **Lot-cardinality and lot-sum code paths are unit-tested but not yet exercised
 by real data.** They did not fire once in 2764 notices. They may be dead code
 for this profile.
@@ -242,9 +312,15 @@ for this profile.
 
 ## Roadmap
 
-**Week 2**
-- [ ] Requirement extraction via the Claude API with structured output — budget, deadline, lot count, required certifications, submission language
-- [ ] Eval harness: 50 hand-labelled notices, per-field scoring, cost and latency per run, results table in this README
+**Done**
+- [x] Requirement extraction via the Claude API with JSON-schema-constrained output
+- [x] Eval harness: stratified 50-case set, per-field scoring that separates abstention from error, cost and latency per run
+- [x] Deterministic regex baseline so the model's numbers have a floor to beat
+- [x] Labelling CLI for the three fields TED has no ground truth for
+
+**Next**
+- [ ] Label the 50 cases and record the first Claude run (needs an API key)
+- [ ] Effort sweep: `low` / `medium` / `high` on the same case set, with cost
 - [ ] FastAPI + HTMX search UI
 - [ ] Dockerfile, env-var config, `/healthz`, runbook
 - [ ] Demo recording and a "what broke" note

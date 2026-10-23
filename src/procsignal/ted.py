@@ -23,6 +23,12 @@ SEARCH_URL = "https://api.ted.europa.eu/v3/notices/search"
 #: Retried with backoff. Everything else is raised immediately.
 RETRY_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
+#: TED rejects a request whose ``fields x limit`` product exceeds this, with
+#: SEARCH_FIELDS_PER_PAGE_EXCEEDS_MAX_LIMIT. Undocumented; found by asking for
+#: 45 fields at a page size of 250. The client derives the page size from it
+#: rather than making the caller do the arithmetic every time a field is added.
+MAX_FIELDS_PER_PAGE = 10_000
+
 
 class TedError(RuntimeError):
     """Base class for TED API failures."""
@@ -130,10 +136,22 @@ class TedClient:
         limit: int = 250,
         iteration_token: str | None = None,
     ) -> Page:
+        field_list = list(fields)
+        effective_limit = clamp_limit(limit, len(field_list))
+        if effective_limit != limit:
+            LOG.debug(
+                "page size %d -> %d to stay under the %d fields-per-page cap "
+                "(%d fields requested)",
+                limit,
+                effective_limit,
+                MAX_FIELDS_PER_PAGE,
+                len(field_list),
+            )
+
         body: dict[str, Any] = {
             "query": query,
-            "fields": list(fields),
-            "limit": limit,
+            "fields": field_list,
+            "limit": effective_limit,
             "paginationMode": "ITERATION",
         }
         if iteration_token:
@@ -233,6 +251,13 @@ class TedClient:
                     page.total,
                 )
                 return
+
+
+def clamp_limit(limit: int, field_count: int) -> int:
+    """Largest page size that keeps ``fields x limit`` under TED's cap."""
+    if field_count <= 0:
+        return max(1, limit)
+    return max(1, min(limit, MAX_FIELDS_PER_PAGE // field_count))
 
 
 def _backoff_seconds(attempt: int) -> float:

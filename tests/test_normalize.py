@@ -237,8 +237,11 @@ class TestNormalizeRealNotice(unittest.TestCase):
             self.n.notice_url, "https://ted.europa.eu/es/notice/-/detail/737081-2026"
         )
 
-    def test_a_clean_notice_raises_no_anomalies(self):
-        self.assertEqual(self.n.anomalies, [])
+    def test_a_clean_notice_raises_only_the_expected_anomaly(self):
+        # This fixture was captured before the requirement-text fields were
+        # added to the profile, so it legitimately has none. Everything else
+        # about it is clean.
+        self.assertEqual(self.n.anomalies, ["no_requirement_text"])
 
 
 class TestNormalizeEdgeCases(unittest.TestCase):
