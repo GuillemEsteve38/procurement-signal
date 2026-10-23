@@ -278,8 +278,7 @@ def _force_utf8_stdio() -> None:
 
     Python on Windows defaults stdout to the ANSI code page (cp1252 here),
     which raises UnicodeEncodeError the moment a notice title contains a
-    character outside it — and that includes ordinary accented Spanish. This
-    is a real bug that cost an afternoon, not defensive boilerplate.
+    character outside it — and that includes ordinary accented Spanish.
     """
     for stream in (sys.stdout, sys.stderr):
         try:

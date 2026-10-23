@@ -384,6 +384,20 @@ class TestStore(unittest.TestCase):
             ).fetchone()
             self.assertEqual(row["value_amount"], 8_000_000.0)
 
+    def test_an_unchanged_payload_still_picks_up_new_relevance_tags(self):
+        with Store(self.db) as store:
+            store.upsert(normalize(NOTICE_737081), NOTICE_737081, profile="a")
+            retagged = normalize(NOTICE_737081, relevance_keywords=("salud",))
+            self.assertTrue(retagged.is_relevant)
+            self.assertEqual(
+                store.upsert(retagged, NOTICE_737081, profile="b"), "unchanged"
+            )
+            store.commit()
+            row = store.conn.execute(
+                "SELECT is_relevant, profile FROM notices"
+            ).fetchone()
+            self.assertEqual((row["is_relevant"], row["profile"]), (1, "b"))
+
     def test_payload_hash_is_order_independent(self):
         a = {"b": 1, "a": [1, 2]}
         b = {"a": [1, 2], "b": 1}
