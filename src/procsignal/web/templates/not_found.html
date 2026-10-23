@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Not found — Procurement Signal{% endblock %}
+
+{% block content %}
+<div class="card" style="margin-top:24px">
+  <h1>No notice {{ publication_number }}</h1>
+  <p>
+    It is not in this database. Either it falls outside the ingested profile
+    and date window, or the publication number is wrong.
+  </p>
+  <p><a href="/">&larr; back to search</a></p>
+</div>
+{% endblock %}

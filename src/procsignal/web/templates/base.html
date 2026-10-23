@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Procurement Signal{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  {# htmx is vendored, not loaded from a CDN, so the app works offline and
+     has no third-party runtime dependency. #}
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <h1><a href="/">Procurement Signal</a></h1>
+      <span class="sub">TED notices &middot; Spanish health-sector IT</span>
+      <span class="spacer"></span>
+      <span class="sub"><a href="/api/docs">API</a></span>
+    </div>
+  </header>
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

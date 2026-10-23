@@ -1,0 +1,112 @@
+{# Swapped on its own by htmx; also included by index.html on a full load. #}
+<div id="results">
+  <div class="summary">
+    <span><b>{{ "{:,}".format(total) }}</b> notice{{ '' if total == 1 else 's' }}</span>
+    {% if facets.eur_total %}
+      <span>EUR <b>{{ facets.eur_total|eur }}</b> combined value</span>
+    {% endif %}
+    <span><b>{{ facets.with_deadline }}</b> with a published deadline</span>
+    {% if pages > 1 %}<span>page <b>{{ page }}</b> of {{ "{:,}".format(pages) }}</span>{% endif %}
+  </div>
+
+  {% if not rows %}
+    <div class="tablewrap">
+      <div class="empty">
+        <b>Nothing matches these filters.</b>
+        {% if filters.relevant_only %}
+          Try unticking <em>Keyword-relevant only</em> — it excludes most of the data set.
+        {% elif filters.status != 'all' %}
+          Try <em>All stages</em>: most notices in the database are award notices.
+        {% else %}
+          Widen the search, or run a longer ingest.
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th><a href="/?{{ qs(sort='date', page=1) }}"
+                 class="{{ 'active' if filters.sort == 'date' }}"
+                 hx-get="/?{{ qs(sort='date', page=1) }}" hx-target="#results"
+                 hx-select="#results" hx-swap="outerHTML" hx-push-url="true">Published</a></th>
+          <th><a href="/?{{ qs(sort='buyer', page=1) }}"
+                 class="{{ 'active' if filters.sort == 'buyer' }}"
+                 hx-get="/?{{ qs(sort='buyer', page=1) }}" hx-target="#results"
+                 hx-select="#results" hx-swap="outerHTML" hx-push-url="true">Title / buyer</a></th>
+          <th>CPV</th>
+          <th class="num"><a href="/?{{ qs(sort='value', page=1) }}"
+                 class="{{ 'active' if filters.sort == 'value' }}"
+                 hx-get="/?{{ qs(sort='value', page=1) }}" hx-target="#results"
+                 hx-select="#results" hx-swap="outerHTML" hx-push-url="true">Value</a></th>
+          <th class="num">Lots</th>
+          <th><a href="/?{{ qs(sort='deadline', page=1) }}"
+                 class="{{ 'active' if filters.sort == 'deadline' }}"
+                 hx-get="/?{{ qs(sort='deadline', page=1) }}" hx-target="#results"
+                 hx-select="#results" hx-swap="outerHTML" hx-push-url="true">Deadline</a></th>
+          <th>Signals</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>
+            <span class="pub">{{ r.publication_date|day }}</span><br>
+            <a class="pub" href="/notice/{{ r.publication_number }}">{{ r.publication_number }}</a>
+          </td>
+          <td class="title">
+            <a href="/notice/{{ r.publication_number }}">{{ r.title or '(no title)' }}</a>
+            <span class="buyer">{{ r.buyer_name or '—' }}{% if r.buyer_country %} · {{ r.buyer_country }}{% endif %}</span>
+          </td>
+          <td><span class="chip">{{ r.main_cpv or '—' }}</span></td>
+          <td class="num">
+            {% if r.value_amount is not none %}
+              {{ r.value_amount|eur }}
+              <span class="pub">{{ r.value_currency or '' }}</span>
+              {% if r.value_source and r.value_source != 'total' %}
+                <span class="chip warn" title="Derived, not an awarded total: {{ r.value_source }}">est</span>
+              {% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td class="num"><span class="chip lots">{{ r.lot_count or 1 }}</span></td>
+          <td>
+            <span class="dl {{ r.deadline|deadline_class }}">{{ r.deadline|day }}</span>
+            {% if r.duration_months %}<br><span class="pub">{{ r.duration_months }} mo</span>{% endif %}
+          </td>
+          <td>
+            {% if r.has_requirements %}<span class="chip">reqs</span>{% endif %}
+            {% for kw in r.matched_keywords[:3] %}<span class="chip kw">{{ kw }}</span>{% endfor %}
+            {% if r.matched_keywords|length > 3 %}
+              <span class="chip kw">+{{ r.matched_keywords|length - 3 }}</span>
+            {% endif %}
+            {% if r.matched_keywords|length == 1 %}
+              <span class="chip warn" title="Tagged relevant on a single keyword — a likely false positive">weak</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if pages > 1 %}
+  <div class="pager">
+    {% if has_prev %}
+      <a href="/?{{ qs(page=page-1) }}" hx-get="/?{{ qs(page=page-1) }}" hx-target="#results"
+         hx-select="#results" hx-swap="outerHTML" hx-push-url="true">&larr; Previous</a>
+    {% else %}
+      <span class="disabled">&larr; Previous</span>
+    {% endif %}
+    {% if has_next %}
+      <a href="/?{{ qs(page=page+1) }}" hx-get="/?{{ qs(page=page+1) }}" hx-target="#results"
+         hx-select="#results" hx-swap="outerHTML" hx-push-url="true">Next &rarr;</a>
+    {% else %}
+      <span class="disabled">Next &rarr;</span>
+    {% endif %}
+    <span class="spacer"></span>
+    <span class="pub">{{ filters.per_page }} per page</span>
+  </div>
+  {% endif %}
+  {% endif %}
+</div>

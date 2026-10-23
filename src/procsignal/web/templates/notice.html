@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}{{ n.publication_number }} — Procurement Signal{% endblock %}
+
+{% set REQ_LABELS = {
+  'selection-criterion-description-lot': 'Selection criteria',
+  'csecurity-clearance-description-lot': 'Security clearance / accreditation',
+  'award-criterion-description-lot': 'Award criteria',
+  'award-criterion-name-lot': 'Award criteria (names)',
+  'exclusion-grounds-description': 'Exclusion grounds',
+  'guarantee-required-description-lot': 'Guarantees required',
+  'renewal-description-lot': 'Renewal',
+  'option-description-lot': 'Options / extensions'
+} %}
+
+{% block content %}
+<p style="margin:18px 0 0"><a href="/">&larr; back to search</a></p>
+
+<div class="detail">
+  <div>
+    <div class="card">
+      <h1>{{ n.title or '(no title)' }}</h1>
+      <p class="pub">{{ n.publication_number }} · {{ n.notice_type or '—' }}
+        {%- if n.title_lang %} · title in {{ n.title_lang }}{% endif %}</p>
+      {% if n.description %}
+        <p style="margin:12px 0 0">{{ n.description }}</p>
+      {% endif %}
+      {% if n.notice_url %}
+        <p style="margin:14px 0 0"><a href="{{ n.notice_url }}" rel="noopener noreferrer" target="_blank">
+          Open the original notice on TED &nearr;</a></p>
+      {% endif %}
+    </div>
+
+    {% if n.lot_titles %}
+    <div class="card">
+      <h2>Lots ({{ n.lot_titles|length }})</h2>
+      <ol style="margin:0; padding-left:20px">
+        {% for t in n.lot_titles %}<li style="margin-bottom:4px">{{ t }}</li>{% endfor %}
+      </ol>
+    </div>
+    {% endif %}
+
+    {% if n.requirements %}
+    <div class="card req">
+      <h2>Requirement text</h2>
+      <p class="pub" style="margin:-6px 0 4px">
+        The only part of a TED notice that is prose rather than a code. This is
+        what the extractor reads.
+      </p>
+      {% for key, items in n.requirements.items() %}
+        <h3>{{ REQ_LABELS.get(key, key) }}</h3>
+        <ul>{% for item in items %}<li>{{ item }}</li>{% endfor %}</ul>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="note">
+      <b>No requirement text published.</b> 157 of 2,764 notices carry none —
+      the detailed requirements live in a separate PPTP document that TED does
+      not distribute.
+    </div>
+    {% endif %}
+
+    {% if n.extractions %}
+    <div class="card">
+      <h2>Extractions</h2>
+      {% for e in n.extractions %}
+        <div style="padding:10px 0; border-top:1px solid var(--border)">
+          <p class="pub" style="margin:0 0 8px">
+            {{ e.extractor }} · {{ e.model }} · effort {{ e.effort }} ·
+            prompt {{ e.prompt_version }} · {{ e.extracted_at }}
+            {%- if e.cost_usd %} · ${{ "%.5f"|format(e.cost_usd) }}{% endif %}
+            {%- if e.latency_ms %} · {{ e.latency_ms }}ms{% endif %}
+          </p>
+          {% if not e.ok %}
+            <p style="color:var(--bad); margin:0">failed: {{ e.error }}</p>
+          {% else %}
+            <dl class="kv">
+              <dt>Health-related</dt><dd>{{ 'yes' if e.is_health_related else 'no' }}</dd>
+              <dt>Work category</dt><dd>{{ e.work_category or '—' }}</dd>
+              <dt>CPV division</dt><dd>{{ e.cpv_division or '—' }}</dd>
+              <dt>Renewable</dt><dd>{{ 'yes' if e.renewable else 'no' }}</dd>
+              <dt>Certifications</dt>
+              <dd>
+                {% if e.required_certifications %}
+                  {% for c in e.required_certifications %}<span class="chip">{{ c }}</span>{% endfor %}
+                {% else %}none stated{% endif %}
+              </dd>
+              {% if e.summary_es %}<dt>Summary</dt><dd>{{ e.summary_es }}</dd>{% endif %}
+            </dl>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <aside>
+    <div class="card">
+      <h2>Key facts</h2>
+      <dl class="kv">
+        <dt>Buyer</dt><dd>{{ n.buyer_name or '—' }}</dd>
+        <dt>Location</dt>
+        <dd>
+          {{ n.buyer_city or '—' }}{% if n.buyer_country %} ({{ n.buyer_country }}){% endif %}
+          {% if n.performance_anywhere %}<br><span class="chip">performance: anywhere</span>{% endif %}
+          {% for code in n.nuts_codes %}<span class="chip">{{ code }}</span>{% endfor %}
+        </dd>
+        <dt>Value</dt>
+        <dd>
+          {% if n.value_amount is not none %}
+            {{ "{:,.2f}".format(n.value_amount) }} {{ n.value_currency or '' }}
+            <br><span class="pub">source: {{ n.value_source }}</span>
+          {% else %}not published{% endif %}
+        </dd>
+        <dt>Deadline</dt>
+        <dd><span class="dl {{ n.deadline|deadline_class }}">{{ n.deadline|day }}</span></dd>
+        <dt>Duration</dt>
+        <dd>
+          {% if n.duration_months %}{{ n.duration_months }} months
+            <span class="pub">({{ n.duration_raw }})</span>
+          {% else %}—{% endif %}
+        </dd>
+        <dt>Lots</dt><dd>{{ n.lot_count or 1 }}</dd>
+        <dt>Nature</dt><dd>{{ n.contract_nature or '—' }}</dd>
+        <dt>Procedure</dt><dd>{{ n.procedure_type or '—' }}</dd>
+        <dt>CPV</dt>
+        <dd>
+          <span class="chip">{{ n.main_cpv or '—' }}</span>
+          {% for code in n.cpv_codes %}{% if code != n.main_cpv %}<span class="chip">{{ code }}</span>{% endif %}{% endfor %}
+        </dd>
+        {% if n.winner_names %}
+        <dt>Winner</dt>
+        <dd>{% for w in n.winner_names %}{{ w }}{% if not loop.last %}, {% endif %}{% endfor %}</dd>
+        {% endif %}
+      </dl>
+    </div>
+
+    <div class="card">
+      <h2>Relevance</h2>
+      {% if n.is_relevant %}
+        <p style="margin:0 0 8px">Tagged relevant by
+          {{ n.matched_keywords|length }} keyword{{ '' if n.matched_keywords|length == 1 else 's' }}:</p>
+        {% for kw in n.matched_keywords %}<span class="chip kw">{{ kw }}</span>{% endfor %}
+        {% if n.matched_keywords|length == 1 %}
+          <p class="pub" style="margin:10px 0 0">
+            A single weak match. 118 of 424 relevant notices match on one keyword
+            alone, and some of those are wrong.
+          </p>
+        {% endif %}
+      {% else %}
+        <p style="margin:0" class="pub">Not tagged relevant by the keyword filter.</p>
+      {% endif %}
+    </div>
+
+    {% if n.anomalies %}
+    <div class="card">
+      <h2>Anomalies</h2>
+      {% for a in n.anomalies %}<span class="chip warn">{{ a }}</span>{% endfor %}
+      <p class="pub" style="margin:10px 0 0">
+        Flagged during normalization. These are properties of the published
+        data, not errors in reading it.
+      </p>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <h2>Provenance</h2>
+      <dl class="kv">
+        <dt>First seen</dt><dd class="pub">{{ n.first_seen_at }}</dd>
+        <dt>Last seen</dt><dd class="pub">{{ n.last_seen_at }}</dd>
+        <dt>Profile</dt><dd class="pub">{{ n.profile }}</dd>
+        <dt>Payload hash</dt><dd class="pub">{{ n.payload_sha256[:16] }}&hellip;</dd>
+      </dl>
+    </div>
+  </aside>
+</div>
+{% endblock %}
