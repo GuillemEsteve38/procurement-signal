@@ -1,4 +1,7 @@
 .venv/
+
+# Worktrees and local state created by tooling, not project content.
+.claude/
 __pycache__/
 *.py[cod]
 *.egg-info/

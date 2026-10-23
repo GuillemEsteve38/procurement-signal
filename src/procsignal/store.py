@@ -27,7 +27,16 @@ from typing import Any, Iterable
 
 from .normalize import NormalizedNotice
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+#: Columns added after v1 shipped. ``CREATE TABLE IF NOT EXISTS`` does not add
+#: columns to a table that already exists, so an existing database needs these
+#: applied explicitly or every insert fails on an unknown column.
+MIGRATIONS: tuple[tuple[str, str, str], ...] = (
+    ("notices", "duration_months", "INTEGER"),
+    ("notices", "duration_raw", "TEXT"),
+    ("notices", "requirements", "TEXT"),
+)
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -89,6 +98,10 @@ CREATE TABLE IF NOT EXISTS notices (
     contract_nature        TEXT,
     winner_names           TEXT,  -- json array
 
+    duration_months        INTEGER,
+    duration_raw           TEXT,
+    requirements           TEXT,  -- json object: TED field -> list of text blocks
+
     notice_url             TEXT,
     contract_url           TEXT,
 
@@ -131,6 +144,40 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
     error          TEXT
 );
 
+-- One row per notice per extractor configuration, so two prompt versions or
+-- two models can be compared on the same notice without overwriting.
+CREATE TABLE IF NOT EXISTS extractions (
+    publication_number  TEXT NOT NULL,
+    extractor           TEXT NOT NULL,
+    model               TEXT NOT NULL,
+    effort              TEXT NOT NULL,
+    prompt_version      TEXT NOT NULL,
+
+    cpv_division        TEXT,
+    contract_nature     TEXT,
+    lot_count           INTEGER,
+    is_health_related   INTEGER,
+    work_category       TEXT,
+    required_certifications TEXT,  -- json array
+    renewable           INTEGER,
+    summary_es          TEXT,
+
+    input_tokens        INTEGER NOT NULL DEFAULT 0,
+    output_tokens       INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens  INTEGER NOT NULL DEFAULT 0,
+    cost_usd            REAL NOT NULL DEFAULT 0,
+    latency_ms          INTEGER NOT NULL DEFAULT 0,
+    ok                  INTEGER NOT NULL DEFAULT 1,
+    error               TEXT,
+    extracted_at        TEXT NOT NULL,
+
+    PRIMARY KEY (publication_number, extractor, model, effort, prompt_version)
+);
+
+CREATE INDEX IF NOT EXISTS ix_extractions_health
+    ON extractions(is_health_related);
+
 -- Field-level drift detector: how often each API key has been seen, and when.
 -- A key that appears for the first time months into the project is how a
 -- schema change announces itself.
@@ -158,6 +205,10 @@ JSON_COLUMNS = frozenset(
         "unknown_fields",
     }
 )
+
+#: JSON columns holding an object rather than an array. Kept separate because
+#: `dict or []` would silently turn an empty mapping into an empty list.
+JSON_OBJECT_COLUMNS = frozenset({"requirements"})
 
 
 @dataclasses.dataclass
@@ -197,12 +248,27 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.execute(
             "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (str(SCHEMA_VERSION),),
         )
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Add post-v1 columns to a database created by an earlier version."""
+        for table, column, decl in MIGRATIONS:
+            existing = {
+                row["name"]
+                for row in self.conn.execute(f"PRAGMA table_info({table})")
+            }
+            if not existing:
+                continue  # table does not exist yet; SCHEMA just created it
+            if column not in existing:
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {decl}"
+                )
 
     def __enter__(self) -> "Store":
         return self
@@ -320,6 +386,112 @@ class Store:
             return "inserted"
         return "unchanged" if prior["payload_sha256"] == sha else "updated"
 
+    def save_extraction(
+        self, publication_number: str, extraction: Any
+    ) -> None:
+        """Persist one extraction, keyed by its full configuration.
+
+        The key includes extractor, model, effort and prompt version, so two
+        configurations can be compared on the same notice instead of one
+        silently overwriting the other.
+        """
+        self.conn.execute(
+            "INSERT INTO extractions ("
+            " publication_number, extractor, model, effort, prompt_version,"
+            " cpv_division, contract_nature, lot_count, is_health_related,"
+            " work_category, required_certifications, renewable, summary_es,"
+            " input_tokens, output_tokens, cache_read_tokens,"
+            " cache_write_tokens, cost_usd, latency_ms, ok, error, extracted_at"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(publication_number, extractor, model, effort,"
+            " prompt_version) DO UPDATE SET"
+            "  cpv_division = excluded.cpv_division,"
+            "  contract_nature = excluded.contract_nature,"
+            "  lot_count = excluded.lot_count,"
+            "  is_health_related = excluded.is_health_related,"
+            "  work_category = excluded.work_category,"
+            "  required_certifications = excluded.required_certifications,"
+            "  renewable = excluded.renewable,"
+            "  summary_es = excluded.summary_es,"
+            "  input_tokens = excluded.input_tokens,"
+            "  output_tokens = excluded.output_tokens,"
+            "  cache_read_tokens = excluded.cache_read_tokens,"
+            "  cache_write_tokens = excluded.cache_write_tokens,"
+            "  cost_usd = excluded.cost_usd,"
+            "  latency_ms = excluded.latency_ms,"
+            "  ok = excluded.ok,"
+            "  error = excluded.error,"
+            "  extracted_at = excluded.extracted_at",
+            (
+                publication_number,
+                extraction.extractor,
+                extraction.model,
+                extraction.effort,
+                extraction.prompt_version,
+                extraction.cpv_division,
+                extraction.contract_nature,
+                extraction.lot_count,
+                int(bool(extraction.is_health_related)),
+                extraction.work_category,
+                json.dumps(extraction.required_certifications, ensure_ascii=False),
+                int(bool(extraction.renewable)),
+                extraction.summary_es,
+                extraction.input_tokens,
+                extraction.output_tokens,
+                extraction.cache_read_tokens,
+                extraction.cache_write_tokens,
+                extraction.cost_usd,
+                extraction.latency_ms,
+                int(bool(extraction.ok)),
+                extraction.error,
+                now(),
+            ),
+        )
+
+    def notices_needing_extraction(
+        self,
+        *,
+        extractor: str,
+        model: str,
+        effort: str,
+        prompt_version: str,
+        relevant_only: bool = True,
+        limit: int | None = None,
+    ) -> list[sqlite3.Row]:
+        """Notices with no successful extraction for this exact configuration."""
+        clauses = ["n.title IS NOT NULL"]
+        if relevant_only:
+            clauses.append("n.is_relevant = 1")
+        where = " AND ".join(clauses)
+        sql = (
+            "SELECT n.publication_number, n.title, n.description, n.lot_titles,"
+            " n.requirements"
+            " FROM notices n"
+            " LEFT JOIN extractions e"
+            "   ON e.publication_number = n.publication_number"
+            "  AND e.extractor = ? AND e.model = ? AND e.effort = ?"
+            "  AND e.prompt_version = ? AND e.ok = 1"
+            f" WHERE {where} AND e.publication_number IS NULL"
+            " ORDER BY n.publication_date DESC"
+        )
+        params: list[Any] = [extractor, model, effort, prompt_version]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return list(self.conn.execute(sql, params))
+
+    def extraction_summary(self) -> dict[str, Any]:
+        row = self.conn.execute(
+            "SELECT COUNT(*) n, SUM(ok) ok, SUM(cost_usd) cost,"
+            " SUM(is_health_related) health FROM extractions"
+        ).fetchone()
+        return {
+            "extractions": row["n"] or 0,
+            "ok": row["ok"] or 0,
+            "cost_usd": row["cost"] or 0.0,
+            "health_related": row["health"] or 0,
+        }
+
     def observe_fields(
         self, raw: dict[str, Any], *, expected: Iterable[str] = ()
     ) -> None:
@@ -404,6 +576,8 @@ def _row_from_notice(
     row = dataclasses.asdict(notice)
     for key in JSON_COLUMNS:
         row[key] = json.dumps(row.get(key) or [], ensure_ascii=False)
+    for key in JSON_OBJECT_COLUMNS:
+        row[key] = json.dumps(row.get(key) or {}, ensure_ascii=False)
     row["performance_anywhere"] = int(bool(row["performance_anywhere"]))
     row["is_relevant"] = int(bool(row["is_relevant"]))
     row["profile"] = profile

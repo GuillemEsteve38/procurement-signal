@@ -45,6 +45,22 @@ NOTICE_FIELDS: tuple[str, ...] = (
     # when
     "deadline-receipt-request",
     "deadline-receipt-tender-date-lot",
+    # Contract duration is published structured, as a value plus a unit code.
+    "duration-period-value-lot",
+    "duration-period-unit-lot",
+    # Requirement text. Added after measuring population on open contract
+    # notices: award criteria 81%, selection criteria 70%, exclusion grounds
+    # 64%, renewal/option ~20%, security clearance ~1%. description-proc alone
+    # is a 188-character subject line and cannot support extraction; see
+    # docs/EVAL.md.
+    "award-criterion-description-lot",
+    "award-criterion-name-lot",
+    "selection-criterion-description-lot",
+    "exclusion-grounds-description",
+    "renewal-description-lot",
+    "option-description-lot",
+    "guarantee-required-description-lot",
+    "csecurity-clearance-description-lot",
     # where
     "place-of-performance",
     "place-of-performance-country-lot",

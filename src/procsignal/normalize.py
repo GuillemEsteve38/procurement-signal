@@ -62,6 +62,31 @@ A_NO_BUYER_NAME = "no_buyer_name"
 A_MULTI_BUYER_ID_SCHEME = "multi_buyer_id_scheme"
 A_LOT_CARDINALITY_MISMATCH = "lot_cardinality_mismatch"
 A_UNKNOWN_FIELDS = "unknown_fields"
+A_NO_REQUIREMENT_TEXT = "no_requirement_text"
+A_UNKNOWN_DURATION_UNIT = "unknown_duration_unit"
+
+#: TED duration unit codes -> months. Converting to a single unit makes
+#: durations comparable; the raw value+unit is kept in ``duration_raw`` so a
+#: wrong conversion is visible rather than baked in.
+DURATION_UNIT_MONTHS: dict[str, float] = {
+    "MONTH": 1.0,
+    "YEAR": 12.0,
+    "WEEK": 7.0 / 30.0,
+    "DAY": 1.0 / 30.0,
+    "HOUR": 1.0 / (30.0 * 24.0),
+}
+
+#: The requirement-text fields, in the order they are most useful to a reader.
+REQUIREMENT_FIELDS: tuple[str, ...] = (
+    "selection-criterion-description-lot",
+    "csecurity-clearance-description-lot",
+    "award-criterion-description-lot",
+    "award-criterion-name-lot",
+    "exclusion-grounds-description",
+    "guarantee-required-description-lot",
+    "renewal-description-lot",
+    "option-description-lot",
+)
 
 
 @dataclass
@@ -108,6 +133,13 @@ class NormalizedNotice:
     procedure_type: str | None = None
     contract_nature: str | None = None
     winner_names: list[str] = field(default_factory=list)
+
+    duration_months: int | None = None
+    duration_raw: str | None = None
+    #: Free-text requirement blocks, keyed by their TED field. This is the
+    #: extractor's actual input — ``description`` alone is a ~190-character
+    #: subject line and cannot support requirement extraction.
+    requirements: dict[str, list[str]] = field(default_factory=dict)
 
     notice_url: str | None = None
     contract_url: str | None = None
@@ -401,6 +433,10 @@ def normalize(
     # -- place -------------------------------------------------------------
     _resolve_places(n, raw)
 
+    # -- duration and requirement text ------------------------------------
+    _resolve_duration(n, raw)
+    _resolve_requirements(n, raw, langs)
+
     # -- procedure and outcome --------------------------------------------
     n.procedure_type = _scalar(raw.get("procedure-type"))
     natures = unique(str(x) for x in as_list(raw.get("contract-nature")))
@@ -506,6 +542,86 @@ def _resolve_places(n: NormalizedNotice, raw: dict[str, Any]) -> None:
 
     n.nuts_codes = unique(nuts)
     n.performance_countries = unique(countries)
+
+
+def _resolve_duration(n: NormalizedNotice, raw: dict[str, Any]) -> None:
+    """Convert TED's value+unit duration pair to months.
+
+    Per-lot durations can differ; the longest is kept, because for a vendor
+    deciding whether a contract is worth pursuing the overall span matters
+    more than the shortest lot.
+    """
+    values = [v for v in as_list(raw.get("duration-period-value-lot"))]
+    units = [str(u).strip().upper() for u in as_list(raw.get("duration-period-unit-lot"))]
+    if not values:
+        return
+
+    n.duration_raw = ", ".join(
+        f"{v} {units[i] if i < len(units) else '?'}" for i, v in enumerate(values)
+    )
+
+    best: float | None = None
+    for index, value in enumerate(values):
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            continue
+        unit = units[index] if index < len(units) else (units[0] if units else "")
+        factor = DURATION_UNIT_MONTHS.get(unit)
+        if factor is None:
+            n.flag(A_UNKNOWN_DURATION_UNIT)
+            continue
+        months = amount * factor
+        if best is None or months > best:
+            best = months
+
+    if best is not None:
+        n.duration_months = int(round(best))
+
+
+def _resolve_requirements(
+    n: NormalizedNotice, raw: dict[str, Any], langs: Sequence[str]
+) -> None:
+    """Collect the requirement-text blocks the extractor will actually read."""
+    for name in REQUIREMENT_FIELDS:
+        items, _ = language_items(raw.get(name), langs)
+        # Per-lot arrays repeat the same boilerplate across lots; dedupe so a
+        # seven-lot notice does not pay seven times the tokens for one clause.
+        items = [t for t in unique(items) if t]
+        if items:
+            n.requirements[name] = items
+
+    if not n.requirements:
+        n.flag(A_NO_REQUIREMENT_TEXT)
+
+
+def requirement_text(requirements: dict[str, list[str]], *, max_chars: int = 8000) -> str:
+    """Render the requirement blocks as labelled prose for a prompt."""
+    labels = {
+        "selection-criterion-description-lot": "CRITERIOS DE SELECCIÓN",
+        "csecurity-clearance-description-lot": "SEGURIDAD / ACREDITACIONES",
+        "award-criterion-description-lot": "CRITERIOS DE ADJUDICACIÓN",
+        "award-criterion-name-lot": "CRITERIOS DE ADJUDICACIÓN (NOMBRES)",
+        "exclusion-grounds-description": "MOTIVOS DE EXCLUSIÓN",
+        "guarantee-required-description-lot": "GARANTÍAS EXIGIDAS",
+        "renewal-description-lot": "RENOVACIÓN",
+        "option-description-lot": "PRÓRROGAS / OPCIONES",
+    }
+    parts: list[str] = []
+    budget = max_chars
+    for name in REQUIREMENT_FIELDS:
+        items = requirements.get(name)
+        if not items:
+            continue
+        body = "\n".join(f"  - {t}" for t in items)
+        block = f"{labels.get(name, name)}:\n{body}"
+        if len(block) > budget:
+            block = block[: max(0, budget)] + "\n  [...truncado...]"
+        parts.append(block)
+        budget -= len(block)
+        if budget <= 0:
+            break
+    return "\n\n".join(parts)
 
 
 def _scalar(value: Any) -> str | None:
