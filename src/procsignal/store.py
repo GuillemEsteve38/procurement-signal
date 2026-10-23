@@ -8,7 +8,8 @@ restartable rather than merely re-runnable:
    wrong guess costs a re-parse, not a re-crawl.
 2. **Writes are idempotent and keyed on ``publication-number``.** A run killed
    halfway re-runs with no duplicates. Re-ingesting unchanged data is detected
-   by content hash and recorded as "unchanged" rather than written again.
+   by content hash and counted as "unchanged", but the normalized row is still
+   rewritten, so a new profile or normalizer fix reaches existing notices.
 3. **Every run is logged, including failures.** A silent short run is the
    failure mode that matters most in ingestion, so row counts per run are
    first-class data, not log output.
@@ -300,13 +301,8 @@ class Store:
             (notice.publication_number, blob, sha, ts, ts),
         )
 
-        if prior is not None and prior["payload_sha256"] == sha:
-            self.conn.execute(
-                "UPDATE notices SET last_seen_at=? WHERE publication_number=?",
-                (ts, notice.publication_number),
-            )
-            return "unchanged"
-
+        # The row is rewritten even when the payload is unchanged: relevance tags
+        # and normalized fields depend on the profile and normalizer code too.
         row = _row_from_notice(notice, profile=profile, sha=sha, ts=ts)
         columns = ", ".join(row)
         placeholders = ", ".join(f":{k}" for k in row)
@@ -320,7 +316,9 @@ class Store:
             f"ON CONFLICT(publication_number) DO UPDATE SET {assignments}",
             row,
         )
-        return "updated" if prior is not None else "inserted"
+        if prior is None:
+            return "inserted"
+        return "unchanged" if prior["payload_sha256"] == sha else "updated"
 
     def observe_fields(
         self, raw: dict[str, Any], *, expected: Iterable[str] = ()

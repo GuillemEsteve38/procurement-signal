@@ -207,8 +207,9 @@ docs/
 | `field_observations` | How often each API key has been seen and when first seen — a key appearing for the first time months in is how a schema change announces itself |
 
 Writes are keyed on `publication_number` and compare a sorted-key content hash,
-so re-ingesting unchanged data is recorded as `unchanged` rather than rewritten,
-and `first_seen_at` never drifts. `last_seen_at` is bumped regardless, which is
+so re-ingesting unchanged data is counted as `unchanged`. The normalized row is
+still rewritten, so new relevance keywords or a normalizer fix reach existing
+notices without a re-crawl, and `first_seen_at` never drifts. `last_seen_at` is bumped regardless, which is
 how "TED still lists this notice" is distinguishable from "we have not looked
 since March".
 
@@ -263,4 +264,4 @@ Python on Windows defaults file and stdout encoding to the ANSI code page
 (cp1252 here), which raises `UnicodeEncodeError` on ordinary accented Spanish.
 Every file handle in this project is explicitly UTF-8, `ingest.py` reconfigures
 stdio on startup, and there is a regression test that round-trips `FACTORÍA`
-through SQLite. This cost an afternoon and is not defensive boilerplate.
+through SQLite.
