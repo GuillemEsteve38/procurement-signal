@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import logging
+import os
 import sys
 import traceback
 
@@ -22,7 +23,7 @@ from .ted import Page, TedClient, TedError, TedQueryError
 
 LOG = logging.getLogger("procsignal.ingest")
 
-DEFAULT_DB = "data/procurement.sqlite3"
+DEFAULT_DB = os.environ.get("PROCSIGNAL_DB", "data/procurement.sqlite3")
 
 
 def main(argv: list[str] | None = None) -> int:

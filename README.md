@@ -9,8 +9,9 @@ Built as a forward-deployed-engineering practice project. The client is fictiona
 (a Spanish health-sector software vendor); the data, the API quirks, and the
 requirements are real. See [SCOPE.md](SCOPE.md) for the one-page spec.
 
-**Status:** ingestion, the extraction eval harness, and the search UI all work
-end to end against live data. Deployment is the remaining piece.
+**Status:** ingestion, the extraction eval harness, the search UI and the
+container all work end to end against live data. What remains needs a human or
+an API key: labelling the eval set and recording the first Claude run.
 
 ---
 
@@ -161,6 +162,20 @@ time would not.
 deadline is not evidence of expiry, and dropping those rows would silently hide
 live tenders that simply never published one.
 
+## Deployment
+
+```sh
+docker compose build
+docker compose run --rm ingest --days 120     # backfill into the data volume
+docker compose up -d web                      # http://localhost:8000
+docker compose run --rm ingest --days 3       # schedule daily
+```
+
+One image runs both the UI and the jobs; config is `PROCSIGNAL_DB`,
+`PROCSIGNAL_HOST`, `PORT` and (for Claude extraction) `ANTHROPIC_API_KEY`.
+Daily scheduling, health checks, backup and failure modes are in
+**[docs/RUNBOOK.md](docs/RUNBOOK.md)**.
+
 ## Browsing the data
 
 `scripts/inspect_db.py` opens the database read-only using Python's built-in
@@ -303,9 +318,13 @@ scripts/
   dump_fields.py enumerate the 1833 selectable API fields
   inspect_db.py  read-only database browser (no sqlite3 CLI required)
   label_cases.py label the eval fields TED has no ground truth for
-tests/           39 tests, fixtures copied from real API responses
+tests/           107 tests, fixtures copied from real API responses
 docs/
   ted_fields.txt generated field vocabulary
+  EVAL.md        eval methodology
+  RUNBOOK.md     deploy, schedule, monitor, recover
+Dockerfile       one image for web + jobs
+compose.yaml     web service + one-shot ingest/enrich jobs
 ```
 
 ### Database
@@ -376,11 +395,11 @@ upgrade path if the data set grows.
 - [x] Labelling CLI for the three fields TED has no ground truth for
 
 - [x] FastAPI + htmx search UI, JSON API, `/healthz`
+- [x] Dockerfile, env-var config, runbook
 
 **Next**
 - [ ] Label the 50 cases and record the first Claude run (needs an API key)
 - [ ] Effort sweep: `low` / `medium` / `high` on the same case set, with cost
-- [ ] Dockerfile, env-var config, runbook
 - [ ] Demo recording and a "what broke" note
 
 **Backlog**

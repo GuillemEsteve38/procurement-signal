@@ -17,6 +17,7 @@ import argparse
 import datetime as dt
 import json
 import logging
+import os
 import random
 import sqlite3
 import statistics
@@ -38,7 +39,7 @@ from .extract import (
 
 LOG = logging.getLogger("procsignal.evaluate")
 
-DEFAULT_DB = "data/procurement.sqlite3"
+DEFAULT_DB = os.environ.get("PROCSIGNAL_DB", "data/procurement.sqlite3")
 DEFAULT_CASES = "evals/cases.jsonl"
 DEFAULT_RESULTS = "evals/results.jsonl"
 
