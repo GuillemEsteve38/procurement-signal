@@ -67,7 +67,12 @@ The database is the only state. SQLite's online backup is safe while jobs run:
 
 ```sh
 docker compose run --rm --entrypoint python web -c "import sqlite3; s=sqlite3.connect('/data/procurement.sqlite3'); s.backup(sqlite3.connect('/data/backup.sqlite3'))"
+docker compose cp web:/data/backup.sqlite3 ./backup.sqlite3
 ```
+
+The second line matters: the first one writes into the same volume as the
+live database, so without copying it out, deleting the volume (`docker compose
+down -v`) takes the backup with it. `cp` needs the `web` container running.
 
 Losing it costs a re-crawl (~25s per 120 days of this profile), plus any
 Claude extractions, which cost money to recreate. Back up before an enrich run.
