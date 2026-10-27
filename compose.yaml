@@ -1,0 +1,30 @@
+services:
+  web:
+    build: .
+    image: procurement-signal
+    ports:
+      - "127.0.0.1:8000:8000"   # no auth: put a reverse proxy in front to expose it
+    volumes:
+      - data:/data
+    restart: unless-stopped
+
+  # One-shot job, not a daemon:  docker compose run --rm ingest --days 3
+  ingest:
+    image: procurement-signal
+    entrypoint: ["python", "-m", "procsignal.ingest"]
+    volumes:
+      - data:/data
+    profiles: ["jobs"]
+
+  # docker compose run --rm enrich --extractor claude --limit 100
+  enrich:
+    image: procurement-signal
+    entrypoint: ["python", "-m", "procsignal.enrich"]
+    environment:
+      - ANTHROPIC_API_KEY
+    volumes:
+      - data:/data
+    profiles: ["jobs"]
+
+volumes:
+  data:

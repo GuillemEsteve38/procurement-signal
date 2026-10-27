@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 
 from .extract import (
@@ -30,7 +31,7 @@ from .store import Store
 
 LOG = logging.getLogger("procsignal.enrich")
 
-DEFAULT_DB = "data/procurement.sqlite3"
+DEFAULT_DB = os.environ.get("PROCSIGNAL_DB", "data/procurement.sqlite3")
 
 
 def main(argv: list[str] | None = None) -> int:

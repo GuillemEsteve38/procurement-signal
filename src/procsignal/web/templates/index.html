@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block content %}
+{# The form GETs to "/" and htmx swaps only #results, so filtering never
+   reloads the shell. Without JS the same form is a plain GET and still
+   works — the handler returns the full page when there is no hx-request
+   header. #}
+<form class="filters"
+      hx-get="/"
+      hx-target="#results"
+      hx-select="#results"
+      hx-swap="outerHTML"
+      hx-push-url="true"
+      hx-indicator="body"
+      hx-trigger="submit, change from:select, change from:input[type=checkbox], keyup changed delay:350ms from:input[type=text], keyup changed delay:500ms from:input[type=number]">
+  <input type="hidden" name="submitted" value="1">
+
+  <div style="grid-column: span 2;">
+    <label for="q">Search title, description, buyer or notice number</label>
+    <input type="text" id="q" name="q" value="{{ filters.q }}"
+           placeholder="historia clínica, SERGAS, 737081-2026&hellip;" autocomplete="off">
+  </div>
+
+  <div>
+    <label for="status">Stage</label>
+    <select id="status" name="status">
+      <option value="open"    {% if filters.status == 'open' %}selected{% endif %}>Open tenders</option>
+      <option value="awarded" {% if filters.status == 'awarded' %}selected{% endif %}>Awarded</option>
+      <option value="planned" {% if filters.status == 'planned' %}selected{% endif %}>Planned</option>
+      <option value="all"     {% if filters.status == 'all' %}selected{% endif %}>All stages</option>
+    </select>
+  </div>
+
+  <div>
+    <label for="cpv">CPV division</label>
+    <select id="cpv" name="cpv">
+      <option value="">Any</option>
+      {% for d in facets.divisions %}
+        <option value="{{ d.value }}" {% if filters.cpv_division == d.value %}selected{% endif %}>
+          {{ d.label }} ({{ d.count }})
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label for="country">Buyer country</label>
+    <select id="country" name="country">
+      <option value="">Any</option>
+      {% for c in facets.countries %}
+        <option value="{{ c.value }}" {% if filters.buyer_country == c.value %}selected{% endif %}>
+          {{ c.value }} ({{ c.count }})
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label for="min_value">Min value (EUR)</label>
+    <input type="number" id="min_value" name="min_value" min="0" step="100000"
+           value="{{ filters.min_value|int if filters.min_value is not none else '' }}"
+           placeholder="any">
+  </div>
+
+  <div class="checks">
+    <label>
+      <input type="checkbox" name="relevant" value="1" {% if filters.relevant_only %}checked{% endif %}>
+      Keyword-relevant only
+    </label>
+    <label>
+      <input type="checkbox" name="hide_expired" value="1" {% if filters.hide_expired %}checked{% endif %}>
+      Hide passed deadlines
+    </label>
+    <label>
+      <input type="checkbox" name="has_requirements" value="1" {% if filters.has_requirements %}checked{% endif %}>
+      Has requirement text
+    </label>
+    <span class="spacer" style="flex:1"></span>
+    <button type="submit">Search</button>
+    {% if not filters.is_default() %}
+      <a class="chip" href="/">reset</a>
+    {% endif %}
+  </div>
+</form>
+
+{% if filters.relevant_only %}
+<div class="note">
+  <b>Keyword-relevant</b> is substring matching and has known false positives —
+  a &euro;58.7m road-pavement contract matches on <code>salud</code>. The matched
+  keywords are shown on every row so you can see why. Untick the filter to see
+  everything.
+</div>
+{% endif %}
+
+{% include "_results.html" %}
+{% endblock %}

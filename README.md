@@ -9,8 +9,9 @@ Built as a forward-deployed-engineering practice project. The client is fictiona
 (a Spanish health-sector software vendor); the data, the API quirks, and the
 requirements are real. See [SCOPE.md](SCOPE.md) for the one-page spec.
 
-**Status:** ingestion and the extraction eval harness work end to end against
-live data. The search UI and deployment are the remaining pieces.
+**Status:** ingestion, the extraction eval harness, the search UI and the
+container all work end to end against live data. What remains needs a human or
+an API key: labelling the eval set and recording the first Claude run.
 
 ---
 
@@ -62,7 +63,7 @@ python -m venv .venv
 # fetch and normalize without writing notice rows
 .venv/Scripts/python.exe -m procsignal.ingest --days 7 --max-pages 1 --dry-run
 
-.venv/Scripts/python.exe -m unittest discover -s tests     # 77 tests
+.venv/Scripts/python.exe -m unittest discover -s tests     # 107 tests
 ```
 
 No API key is required — the TED Search API is public.
@@ -115,6 +116,65 @@ they are the fields worth extracting. **No Claude numbers are recorded yet:**
 there is no Anthropic credential on the machine this was built on. The code
 path exists and is exercised by the stub; `--extractor claude` produces the
 real figures once a key is set.
+
+## Search UI
+
+```sh
+.venv/Scripts/python.exe -m pip install -e ".[web]"
+.venv/Scripts/python.exe -m procsignal.web            # http://127.0.0.1:8000
+```
+
+FastAPI + htmx, server-rendered, no build step. htmx is vendored into
+`web/static/` rather than loaded from a CDN, so the app works offline and has
+no third-party runtime dependency.
+
+| Route | What it does |
+|---|---|
+| `/` | Filter bar + results table. htmx swaps only `#results`; without JS the same form is a plain GET and still works. |
+| `/notice/{publication_number}` | Normalized fields, requirement text, anomalies, provenance, any extractions |
+| `/api/search` | Same filters, JSON out, so the UI is not the only way in |
+| `/healthz` | Row count, latest publication, last ingest time, schema version — 503 if the DB is unreadable |
+| `/api/docs` | Generated OpenAPI docs |
+
+**The default view is the client's working view:** open tenders (`cn-*`), tagged
+relevant, newest first. That's 127 notices out of 2,764 — live tenders with
+real future deadlines from Hospital Vall d'Hebron, Gerencia Regional de Salud
+de Castilla y León, Departamento de Sanidad. Everything else is one control
+away:
+
+| Stage | Relevant | All |
+|---|---:|---:|
+| Open tenders | 127 | 1,003 |
+| Awarded | 289 | 1,633 |
+| Planned | 8 | 118 |
+| **All stages** | **424** | **2,764** |
+
+Two deliberate decisions in here:
+
+**The keyword filter's false positives are shown, not hidden.** Every row
+renders the keywords that caused it to be tagged, and a single-keyword match
+gets a `weak` chip. The €58.7m Palma road-pavement contract still appears when
+you search for it, labelled `salud` + `weak` — a visible wrong answer rather
+than a silent one. Filtering at read time stays reversible; filtering at ingest
+time would not.
+
+**"Hide passed deadlines" keeps notices with no deadline.** Absence of a
+deadline is not evidence of expiry, and dropping those rows would silently hide
+live tenders that simply never published one.
+
+## Deployment
+
+```sh
+docker compose build
+docker compose run --rm ingest --days 120     # backfill into the data volume
+docker compose up -d web                      # http://localhost:8000
+docker compose run --rm ingest --days 3       # schedule daily
+```
+
+One image runs both the UI and the jobs; config is `PROCSIGNAL_DB`,
+`PROCSIGNAL_HOST`, `PORT` and (for Claude extraction) `ANTHROPIC_API_KEY`.
+Daily scheduling, health checks, backup and failure modes are in
+**[docs/RUNBOOK.md](docs/RUNBOOK.md)**.
 
 ## Browsing the data
 
@@ -249,13 +309,22 @@ src/procsignal/
   extract.py     extraction schema, Claude extractor, regex baseline, pricing
   evaluate.py    case-set builder, scorer, run reporting
   enrich.py      CLI: run extraction across the database, resumably
+  web/
+    queries.py   filter parsing and SQL construction (no HTTP, so testable)
+    app.py       FastAPI routes, template filters, /healthz
+    templates/   base, index, results fragment, notice detail
+    static/      vendored htmx + stylesheet
 scripts/
   dump_fields.py enumerate the 1833 selectable API fields
   inspect_db.py  read-only database browser (no sqlite3 CLI required)
   label_cases.py label the eval fields TED has no ground truth for
-tests/           39 tests, fixtures copied from real API responses
+tests/           107 tests, fixtures copied from real API responses
 docs/
   ted_fields.txt generated field vocabulary
+  EVAL.md        eval methodology
+  RUNBOOK.md     deploy, schedule, monitor, recover
+Dockerfile       one image for web + jobs
+compose.yaml     web service + one-shot ingest/enrich jobs
 ```
 
 ### Database
@@ -309,6 +378,12 @@ for the triage decision the client actually asked for.
 by real data.** They did not fire once in 2764 notices. They may be dead code
 for this profile.
 
+**Text search does not fold Spanish accents.** SQLite `LIKE` is
+case-insensitive for ASCII only, so searching `clinica` will not match
+`clínica`. At 2,764 rows this is a real annoyance rather than a performance
+problem; the fix is an FTS5 index with `remove_diacritics`, which is the
+upgrade path if the data set grows.
+
 ---
 
 ## Roadmap
@@ -319,11 +394,12 @@ for this profile.
 - [x] Deterministic regex baseline so the model's numbers have a floor to beat
 - [x] Labelling CLI for the three fields TED has no ground truth for
 
+- [x] FastAPI + htmx search UI, JSON API, `/healthz`
+- [x] Dockerfile, env-var config, runbook
+
 **Next**
 - [ ] Label the 50 cases and record the first Claude run (needs an API key)
 - [ ] Effort sweep: `low` / `medium` / `high` on the same case set, with cost
-- [ ] FastAPI + HTMX search UI
-- [ ] Dockerfile, env-var config, `/healthz`, runbook
 - [ ] Demo recording and a "what broke" note
 
 **Backlog**

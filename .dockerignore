@@ -1,0 +1,9 @@
+.git
+.venv
+.claude
+data
+evals
+**/__pycache__
+**/*.egg-info
+*.sqlite3*
+.env

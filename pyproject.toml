@@ -11,13 +11,17 @@ dependencies = ["httpx>=0.27"]
 
 [project.optional-dependencies]
 extract = ["anthropic>=0.69"]
-web = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "jinja2>=3.1"]
+web = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "jinja2>=3.1", "httpx>=0.27"]
 
 [project.scripts]
 procsignal-ingest = "procsignal.ingest:main"
+procsignal-web = "procsignal.web.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"procsignal.web" = ["templates/*.html", "static/*"]
 
 [tool.setuptools.package-dir]
 "" = "src"
