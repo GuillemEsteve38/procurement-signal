@@ -1,7 +1,7 @@
 # Procurement Signal
 
 Ingests EU public procurement notices from **TED** (Tenders Electronic Daily) for
-a configurable market profile, normalizes a deliberately hostile payload into a
+a configurable market profile, normalizes a notoriously awkward payload into a
 queryable schema, and keeps the raw API response forever so a wrong mapping costs
 a re-parse rather than a re-crawl.
 
@@ -203,7 +203,7 @@ For a GUI, [DB Browser for SQLite](https://sqlitebrowser.org/) opens
 
 ## What the data actually looks like
 
-This is the part worth reading. A single real notice (737081-2026, Servicio
+A single real notice (737081-2026, Servicio
 Madrileño de Salud, €7,053,801.73, three lots), abridged:
 
 ```json
@@ -237,18 +237,20 @@ Six distinct problems in nine lines:
 
 `src/procsignal/normalize.py` handles all six. Two rules govern it:
 
-- **Never drop a notice because a field surprised us.** Anything unexpected is
-  recorded as an anomaly code on the row. The only fatal condition is a missing
+- **Never drop a notice because a field was unexpected.** Anything the normalizer does
+  not recognise is recorded as an anomaly code on the row. The only fatal condition is a missing
   `publication-number`, because without the primary key there is nothing to
   attach the anomaly to.
 - **Never guess silently.** Derived values carry their provenance:
   `value_source` records whether a figure is the awarded total, a
   procedure-level estimate, or a sum across lots. A sum across *mixed
-  currencies* is refused outright rather than stored as a plausible-looking lie.
+  currencies* is refused outright rather than stored as a plausible but wrong figure.
 
 ---
 
-## Notes on the TED API, since they are not documented anywhere
+## Notes on the TED API
+
+None of the following is covered by the published documentation.
 
 **Endpoint.** `POST https://api.ted.europa.eu/v3/notices/search` — public, no API
 key, no auth header.
@@ -283,7 +285,7 @@ looks exactly like a successful run that lost notices.
 **There is no field list and no metadata endpoint.** `/v3/notices/fields` returns
 400. But the API validates the `fields` parameter against an allow-list and puts
 *the entire allow-list* into the 400 body — so requesting a field that cannot
-exist is a documentation endpoint in disguise. `scripts/dump_fields.py` does
+exist returns the field vocabulary as a side effect. `scripts/dump_fields.py` does
 exactly that and writes all **1833** selectable field names to
 [`docs/ted_fields.txt`](docs/ted_fields.txt).
 
@@ -303,7 +305,7 @@ exponential backoff. The 429 in the backfill above was recovered this way.
 src/procsignal/
   profile.py     market definitions; compiles to a TED expert query
   ted.py         API client: retries, scroll pagination, structured errors
-  normalize.py   the hostile-payload transform (the actual engineering)
+  normalize.py   payload transform: language maps, per-lot arrays, provenance
   store.py       SQLite: raw + normalized tables, idempotent upsert, run log
   ingest.py      CLI: date windowing, chunking, reporting
   extract.py     extraction schema, Claude extractor, regex baseline, pricing
